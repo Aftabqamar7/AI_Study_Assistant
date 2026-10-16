@@ -1,939 +1,908 @@
 
 import io
-import json
 import re
-from typing import List
+import json
 
 import streamlit as st
 from groq import Groq
 from pypdf import PdfReader
 from docx import Document
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
+
+# -------------------- CONFIGURATION --------------------
+
+MODEL = "openai/gpt-oss-120b"
 
 st.set_page_config(
-    page_title="Lumina • Document AI",
-    page_icon="✦",
+    page_title="Lumina AI Study Assistant",
+    page_icon="✨",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-# -------------------- DARK THEME --------------------
+# -------------------- CUSTOM DESIGN --------------------
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-
-:root {
-    --bg:#090d18;
-    --panel:#111827;
-    --line:#27334b;
-    --text:#eef2ff;
-    --muted:#a3afc7;
-    --cyan:#67e8f9;
-    --violet:#a78bfa;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 .stApp {
-    background:radial-gradient(ellipse at 12% 0%, #172346 0%, #090d18 65%);
-    color:var(--text);
-    font-family:'DM Sans',sans-serif;
+    background: radial-gradient(circle at top left, #252052, transparent 35%),
+                radial-gradient(circle at top right, #123344, transparent 30%),
+                #0a0d18;
+    color: #f5f7ff;
+    font-family: Inter, sans-serif;
 }
-
-h1,h2,h3 {
-    font-family:'Space Grotesk',sans-serif !important;
-}
-
-.block-container {
-    padding-top:1.7rem;
-    max-width:1300px;
-}
-
 [data-testid="stSidebar"] {
-    background:linear-gradient(180deg,#10182a,#0b1020);
-    border-right:1px solid var(--line);
+    background: #101529;
+    border-right: 1px solid #29334d;
 }
-
-[data-testid="stSidebar"] * {
-    color:var(--text);
-}
+h1, h2, h3 { color: #ffffff !important; }
+p, label { color: #d7def3; }
 
 .hero {
-    padding:28px 30px;
-    border:1px solid #34415d;
-    border-radius:22px;
-    background:linear-gradient(
-        120deg,
-        rgba(103,232,249,.12),
-        rgba(167,139,250,.12) 55%,
-        rgba(17,24,39,.8)
-    );
-    margin-bottom:22px;
+    padding: 30px;
+    border-radius: 22px;
+    border: 1px solid #494073;
+    background: linear-gradient(120deg, #251d49, #112a3b);
+    margin-bottom: 22px;
 }
-
-.eyebrow {
-    text-transform:uppercase;
-    letter-spacing:2px;
-    color:var(--cyan);
-    font-size:11px;
-    font-weight:700;
+.hero-title {
+    font-size: 2.5rem;
+    font-weight: 800;
+    color: white;
 }
-
-.hero h1 {
-    font-size:clamp(30px,4vw,46px);
-    margin:7px 0 8px;
-    line-height:1.1;
+.hero-sub {
+    color: #bbc7e4;
+    font-size: 1rem;
 }
-
-.hero p {
-    color:#c2cce0;
-    font-size:15px;
-    max-width:720px;
+.metric {
+    background: #151c30;
+    border: 1px solid #2c3855;
+    padding: 18px;
+    border-radius: 16px;
+    margin-bottom: 12px;
 }
-
-.stat {
-    background:rgba(21,30,48,.82);
-    border:1px solid var(--line);
-    padding:15px 17px;
-    border-radius:15px;
-    min-height:88px;
+.metric-label {
+    color: #aab6d5;
+    font-size: 0.85rem;
 }
-
-.stat-label {
-    color:var(--muted);
-    font-size:12px;
+.metric-value {
+    color: white;
+    font-size: 1.5rem;
+    font-weight: 800;
+    margin-top: 8px;
 }
-
-.stat-value {
-    font-family:'Space Grotesk';
-    font-size:22px;
-    font-weight:700;
-    margin-top:4px;
-}
-
 .panel {
-    background:rgba(17,24,39,.72);
-    border:1px solid var(--line);
-    padding:20px;
-    border-radius:18px;
+    background: #141b2e;
+    border: 1px solid #2b3652;
+    border-radius: 17px;
+    padding: 20px;
+    margin-bottom: 14px;
 }
-
-.small-muted {
-    color:var(--muted);
-    font-size:13px;
+.eyebrow {
+    color: #b6a3ff;
+    font-size: .78rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
 }
-
+div.stButton > button,
+div.stFormSubmitButton > button {
+    background: linear-gradient(100deg, #7955e8, #536fe5);
+    color: white;
+    border: 1px solid #6556b5;
+    border-radius: 11px;
+    font-weight: 700;
+    min-height: 2.7rem;
+}
+div.stButton > button:hover,
+div.stFormSubmitButton > button:hover {
+    border-color: #22d3ee;
+    color: white;
+}
+.stTextInput input, .stTextArea textarea,
+[data-baseweb="select"] > div {
+    background: #101629 !important;
+    color: white !important;
+    border-color: #303c58 !important;
+    border-radius: 10px !important;
+}
+.stTabs [data-baseweb="tab-list"] {
+    gap: 8px;
+    background: #111629;
+    border-radius: 12px;
+    padding: 7px;
+}
+.stTabs [aria-selected="true"] {
+    background: #302653 !important;
+}
 div[data-testid="stFileUploader"] {
-    border:1px dashed #465675;
-    border-radius:14px;
-    padding:8px;
-    background:rgba(15,23,42,.5);
+    background: #12182b;
+    border: 1px dashed #495578;
+    border-radius: 14px;
+    padding: 10px;
 }
-
-.stButton > button {
-    border-radius:11px;
-    border:1px solid #435274;
-    background:linear-gradient(100deg,#243956,#342a5a);
-    color:#fff;
-    font-weight:650;
-    min-height:42px;
+.small {
+    color: #aab6d5;
+    font-size: .88rem;
 }
-
-.stButton > button:hover {
-    border-color:var(--cyan);
-    color:var(--cyan);
+.question-card {
+    background: #171f34;
+    border: 1px solid #34415f;
+    border-radius: 13px;
+    padding: 16px;
+    margin: 10px 0;
 }
-
-.stTextInput input,
-.stTextArea textarea,
-.stSelectbox div[data-baseweb="select"] {
-    background:#0d1424 !important;
-    color:#eef2ff !important;
-    border-color:#33415d !important;
-    border-radius:10px !important;
-}
-
-hr {
-    border-color:var(--line);
-}
-
-div[data-testid="stTabs"] button {
-    color:#bac7df;
-}
-
-div[data-testid="stTabs"] button[aria-selected="true"] {
-    color:var(--cyan);
-}
+hr { border-color: #29344e; }
 </style>
 """, unsafe_allow_html=True)
-
-
-# -------------------- DOCUMENT PROCESSING --------------------
-
-def extract_text(uploaded_file) -> str:
-    name = uploaded_file.name.lower()
-    raw = uploaded_file.getvalue()
-
-    if name.endswith(".pdf"):
-        reader = PdfReader(io.BytesIO(raw))
-        return "\n".join(
-            page.extract_text() or "" for page in reader.pages
-        )
-
-    if name.endswith(".docx"):
-        doc = Document(io.BytesIO(raw))
-        parts = [
-            p.text for p in doc.paragraphs if p.text.strip()
-        ]
-
-        for table in doc.tables:
-            for row in table.rows:
-                parts.append(
-                    " | ".join(cell.text.strip() for cell in row.cells)
-                )
-
-        return "\n".join(parts)
-
-    if name.endswith((".txt", ".md")):
-        for encoding in ("utf-8", "utf-8-sig", "latin-1"):
-            try:
-                return raw.decode(encoding)
-            except UnicodeDecodeError:
-                continue
-
-    raise ValueError(
-        "Unsupported file type. Upload PDF, DOCX, TXT, or MD."
-    )
-
-
-def chunk_text(
-    text: str,
-    chunk_size: int = 1200,
-    overlap: int = 180
-) -> List[str]:
-
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
-    if not text:
-        return []
-
-    chunks = []
-    start = 0
-
-    while start < len(text):
-        end = min(len(text), start + chunk_size)
-
-        if end < len(text):
-            boundary = max(
-                text.rfind("\n", start + chunk_size // 2, end),
-                text.rfind(". ", start + chunk_size // 2, end)
-            )
-
-            if boundary > start:
-                end = boundary + 1
-
-        piece = text[start:end].strip()
-
-        if piece:
-            chunks.append(piece)
-
-        if end >= len(text):
-            break
-
-        start = max(end - overlap, start + 1)
-
-    return chunks
-
-
-def retrieve(
-    question: str,
-    chunks: List[str],
-    top_k: int = 5
-) -> List[str]:
-
-    if not chunks:
-        return []
-
-    vectorizer = TfidfVectorizer(
-        stop_words=None,
-        ngram_range=(1, 2),
-        max_features=50000
-    )
-
-    matrix = vectorizer.fit_transform(chunks + [question])
-
-    scores = cosine_similarity(
-        matrix[-1], matrix[:-1]
-    ).ravel()
-
-    ids = scores.argsort()[::-1][:min(top_k, len(chunks))]
-
-    return [
-        chunks[i] for i in ids if scores[i] > 0
-    ]
-
-
-# -------------------- GROQ AI --------------------
-
-def call_groq(
-    client,
-    model,
-    system,
-    prompt,
-    temperature=0.3
-):
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=temperature,
-    )
-
-    return response.choices[0].message.content or ""
-
-
-def document_prompt(context, request, language):
-    return f"""Answer the user's request using the document context below.
-Be accurate and helpful.
-
-If the context does not contain the answer, clearly say that the
-uploaded document does not provide enough information. Do not invent facts.
-
-Language requested: {language}.
-
-If Urdu is requested, answer in natural Urdu script unless the user
-asks for Roman Urdu.
-
-Explain technical words simply and use headings and bullets where useful.
-
-DOCUMENT CONTEXT:
----
-{context}
----
-
-USER REQUEST:
-{request}
-"""
-
-
-def parse_json_response(text):
-    text = re.sub(
-        r"^```(?:json)?\s*|\s*```$",
-        "",
-        text.strip(),
-        flags=re.I
-    )
-
-    match = re.search(r"\{.*\}|\[.*\]", text, flags=re.S)
-
-    if match:
-        text = match.group(0)
-
-    return json.loads(text)
-
 
 # -------------------- SESSION STATE --------------------
 
 defaults = {
-    "chunks": [],
-    "doc_name": "",
-    "doc_text": "",
+    "document_text": "",
+    "document_name": "",
     "chat_history": [],
     "quiz": [],
+    "quiz_submitted": False,
     "quiz_answers": {},
-    "explanation": "",
+    "quiz_score": None,
+    "quiz_radio_values": {},
 }
 
 for key, value in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
+# -------------------- DOCUMENT PROCESSING --------------------
+
+def extract_document(uploaded_file):
+    name = uploaded_file.name.lower()
+    content = uploaded_file.getvalue()
+
+    if name.endswith(".pdf"):
+        reader = PdfReader(io.BytesIO(content))
+        return "\n\n".join(
+            page.extract_text() or "" for page in reader.pages
+        ).strip()
+
+    if name.endswith(".docx"):
+        doc = Document(io.BytesIO(content))
+        return "\n".join(
+            paragraph.text for paragraph in doc.paragraphs
+        ).strip()
+
+    if name.endswith((".txt", ".md")):
+        return content.decode("utf-8", errors="replace").strip()
+
+    raise ValueError("Unsupported file type.")
+
+# Simple keyword-based document retrieval.
+def retrieve_context(question, max_chars=12000):
+    text = st.session_state.document_text
+
+    if not text:
+        return ""
+
+    paragraphs = [
+        p.strip()
+        for p in re.split(r"\n+", text)
+        if p.strip()
+    ]
+
+    keywords = {
+        word.lower()
+        for word in re.findall(r"\w+", question)
+        if len(word) > 2
+    }
+
+    scored_paragraphs = []
+
+    for index, paragraph in enumerate(paragraphs):
+        paragraph_words = {
+            word.lower()
+            for word in re.findall(r"\w+", paragraph)
+            if len(word) > 2
+        }
+
+        score = len(keywords.intersection(paragraph_words))
+
+        if score > 0:
+            scored_paragraphs.append(
+                (score, index, paragraph)
+            )
+
+    scored_paragraphs.sort(
+        key=lambda item: (-item[0], item[1])
+    )
+
+    if scored_paragraphs:
+        selected = [
+            item[2] for item in scored_paragraphs[:20]
+        ]
+    else:
+        selected = paragraphs[:10]
+
+    return "\n\n".join(selected)[:max_chars]
+
+# -------------------- GROQ AI --------------------
+
+def get_ai_response(messages, temperature=0.3):
+    api_key = st.session_state.get("groq_api_key", "").strip()
+
+    if not api_key:
+        raise ValueError(
+            "Please enter your Groq API key in the sidebar."
+        )
+
+    client = Groq(api_key=api_key)
+
+    response = client.chat.completions.create(
+        model=MODEL,
+        messages=messages,
+        temperature=temperature,
+    )
+
+    return response.choices[0].message.content or ""
+
+# -------------------- STUDY CHAT --------------------
+
+def explain_topic(question, language, style):
+    context = retrieve_context(question)
+
+    languages = {
+        "English": "Answer in simple, clear English.",
+        "Urdu": "جواب آسان اور واضح اردو میں دیں۔",
+        "Roman Urdu": "Answer in easy Roman Urdu.",
+        "English + Urdu": (
+            "First answer in simple English, then explain in Urdu."
+        ),
+    }
+
+    styles = {
+        "Simple Explanation": (
+            "Explain for a beginner. Include a simple example."
+        ),
+        "Exam Notes": (
+            "Use headings, short bullet points, and key points "
+            "for exam preparation."
+        ),
+        "Detailed Explanation": (
+            "Explain the topic clearly with useful details and examples."
+        ),
+    }
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are Lumina, a helpful study tutor. "
+                "Use the document context as your main source. "
+                "Never pretend the document contains information "
+                "that is not present. If the answer is missing, "
+                "say so clearly. "
+                + languages[language]
+                + " "
+                + styles[style]
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"DOCUMENT CONTEXT:\n{context}\n\n"
+                f"STUDENT QUESTION:\n{question}"
+            ),
+        },
+    ]
+
+    return get_ai_response(messages)
+
+# -------------------- QUIZ GENERATION --------------------
+
+def generate_quiz(topic, count, difficulty, language):
+    context = retrieve_context(
+        topic or "main concepts",
+        max_chars=14000,
+    )
+
+    prompt = f"""
+Create exactly {count} multiple-choice questions based on the
+document context below.
+
+Difficulty: {difficulty}
+Language: {language}
+
+Return ONLY valid JSON using this structure:
+
+[
+  {{
+    "question": "Question text",
+    "options": [
+      "Option A",
+      "Option B",
+      "Option C",
+      "Option D"
+    ],
+    "answer": 0,
+    "explanation": "Explain why this answer is correct."
+  }}
+]
+
+The answer must be an integer from 0 to 3.
+Questions must be clear and based on the supplied material.
+Do not use Markdown code fences.
+
+DOCUMENT CONTEXT:
+{context}
+
+TOPIC:
+{topic or "All main concepts"}
+"""
+
+    raw = get_ai_response(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You create educational MCQ quizzes. "
+                    "Return only valid JSON."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.3,
+    )
+
+    raw = re.sub(
+        r"^```(?:json)?\s*|\s*```$",
+        "",
+        raw.strip(),
+        flags=re.IGNORECASE,
+    )
+
+    match = re.search(r"\[.*\]", raw, flags=re.DOTALL)
+
+    if not match:
+        raise ValueError(
+            "The AI did not return valid quiz data. Try again."
+        )
+
+    questions = json.loads(match.group(0))
+    valid_questions = []
+
+    for question in questions:
+        options = question.get("options", [])
+        answer = question.get("answer")
+
+        if (
+            isinstance(question.get("question"), str)
+            and len(options) == 4
+            and isinstance(answer, int)
+            and 0 <= answer <= 3
+        ):
+            valid_questions.append({
+                "question": question["question"],
+                "options": [str(option) for option in options],
+                "answer": answer,
+                "explanation": str(
+                    question.get("explanation", "")
+                ),
+            })
+
+    if not valid_questions:
+        raise ValueError("No valid questions were generated.")
+
+    return valid_questions[:count]
 
 # -------------------- SIDEBAR --------------------
 
 with st.sidebar:
-    st.markdown("## ✦ Lumina")
-    st.caption("Your personal document tutor")
-    st.markdown("---")
+    st.markdown("## ✨ Lumina")
+    st.caption("Your personal AI study space")
+    st.divider()
 
-    st.markdown("### 🔐 Connect to Groq")
+    st.markdown("### 🔐 Connect Groq")
 
-    api_key = st.text_input(
+    st.text_input(
         "Your Groq API key",
         type="password",
-        placeholder="gsk_...",
-        help="Enter your own Groq API key."
+        key="groq_api_key",
+        placeholder="Enter your Groq API key",
     )
 
-    model = st.selectbox(
-        "AI model",
-        [
-            "llama-3.3-70b-versatile",
-            "openai/gpt-oss-120b",
-            "llama-3.1-8b-instant"
-        ],
-        index=0
+    st.caption(
+        "Keep your API key private. Never commit it to GitHub."
     )
 
-    st.caption("Get your API key at console.groq.com")
+    st.divider()
+    st.markdown("### 📚 Upload study material")
 
-    st.markdown("---")
-    st.markdown("### 📚 Add a document")
-
-    uploaded = st.file_uploader(
-        "Upload your study material",
-        type=["pdf", "docx", "txt", "md"]
+    uploaded_file = st.file_uploader(
+        "Choose a document",
+        type=["pdf", "docx", "txt", "md"],
     )
 
-    if st.button(
-        "Analyze document",
-        use_container_width=True,
-        disabled=(uploaded is None)
-    ):
-        with st.spinner("Reading and indexing your document..."):
+    if st.button("📥 Load Document", use_container_width=True):
+        if uploaded_file is None:
+            st.warning("Please choose a document first.")
+        else:
             try:
-                extracted = extract_text(uploaded)
-                chunks = chunk_text(extracted)
+                extracted = extract_document(uploaded_file)
 
-                if not extracted.strip() or not chunks:
+                if not extracted:
                     st.error(
-                        "No readable text found. Scanned PDFs may need OCR."
+                        "No readable text found. "
+                        "Scanned PDFs may need OCR."
                     )
                 else:
-                    st.session_state.doc_text = extracted
-                    st.session_state.chunks = chunks
-                    st.session_state.doc_name = uploaded.name
+                    st.session_state.document_text = extracted
+                    st.session_state.document_name = uploaded_file.name
                     st.session_state.chat_history = []
                     st.session_state.quiz = []
                     st.session_state.quiz_answers = {}
-                    st.session_state.explanation = ""
+                    st.session_state.quiz_submitted = False
+                    st.success("Document loaded successfully!")
 
-                    st.success(
-                        f"Ready! Indexed {len(chunks)} text sections."
-                    )
+            except Exception as error:
+                st.error(f"Could not read document: {error}")
 
-            except Exception as e:
-                st.error(f"Could not read this file: {e}")
+    if st.session_state.document_text:
+        st.markdown("**Current document**")
+        st.write(st.session_state.document_name)
+        st.caption(
+            f"{len(st.session_state.document_text):,} characters extracted"
+        )
 
-    st.markdown("---")
+        if st.button("Remove Document", use_container_width=True):
+            st.session_state.document_text = ""
+            st.session_state.document_name = ""
+            st.session_state.chat_history = []
+            st.session_state.quiz = []
+            st.session_state.quiz_answers = {}
+            st.session_state.quiz_submitted = False
+            st.rerun()
 
-    st.markdown(
-        "<div class='small-muted'>"
-        "Privacy tip: avoid uploading confidential documents without "
-        "permission. Relevant document text and prompts are sent to "
-        "Groq when you use AI features."
-        "</div>",
-        unsafe_allow_html=True
-    )
-
+    st.divider()
+    st.markdown("### ⚙️ Active model")
+    st.code(MODEL)
+    st.caption("Fixed model. No Llama model options.")
 
 # -------------------- MAIN HEADER --------------------
 
 st.markdown("""
 <div class="hero">
-    <div class="eyebrow">READ LESS. UNDERSTAND MORE.</div>
-    <h1>Turn any document into
-    <span style="color:#67e8f9">understanding.</span></h1>
-    <p>
-        Upload a PDF or document. Get simple explanations in English
-        or Urdu, ask questions grounded in your notes, and test what
-        you learned with a custom quiz.
+    <div class="eyebrow">YOUR KNOWLEDGE, MADE CLEARER</div>
+    <div class="hero-title">Study smarter with Lumina ✨</div>
+    <p class="hero-sub">
+        Understand your notes, ask questions, prepare for exams,
+        and challenge yourself with interactive quizzes.
     </p>
+    <span>📚 Document AI　·　🧠 Quiz Arena　·　🌐 Multilingual Learning</span>
 </div>
 """, unsafe_allow_html=True)
 
+# Dashboard metrics
+col1, col2, col3 = st.columns(3)
 
-# -------------------- DASHBOARD --------------------
+with col1:
+    st.markdown(
+        f"""
+        <div class="metric">
+            <div class="metric-label">📄 STUDY MATERIAL</div>
+            <div class="metric-value">
+                {"Ready" if st.session_state.document_text else "Not Added"}
+            </div>
+            <div class="small">
+                {st.session_state.document_name or "Upload from the sidebar"}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-c1, c2, c3 = st.columns(3)
+with col2:
+    st.markdown(
+        f"""
+        <div class="metric">
+            <div class="metric-label">💬 QUESTIONS ASKED</div>
+            <div class="metric-value">
+                {len(st.session_state.chat_history)}
+            </div>
+            <div class="small">Your study conversations</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-with c1:
-    name = st.session_state.doc_name
-    display_name = name[:25] + ("..." if len(name) > 25 else "")
+with col3:
+    latest_score = st.session_state.quiz_score
+    score_text = (
+        f"{latest_score}%"
+        if latest_score is not None
+        else "—"
+    )
 
     st.markdown(
-        f"""<div class="stat">
-        <div class="stat-label">CURRENT DOCUMENT</div>
-        <div class="stat-value">{display_name if name else "Not uploaded"}</div>
-        </div>""",
-        unsafe_allow_html=True
+        f"""
+        <div class="metric">
+            <div class="metric-label">🏆 LATEST QUIZ SCORE</div>
+            <div class="metric-value">{score_text}</div>
+            <div class="small">Practice and improve</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-with c2:
+# Main application tabs
+study_tab, quiz_tab, guide_tab = st.tabs([
+    "💬 Study Chat",
+    "🏆 Quiz Arena",
+    "🧭 Quick Start",
+])
+
+# ==================== STUDY CHAT ====================
+
+with study_tab:
+    st.markdown("## 💬 Ask your study material")
     st.markdown(
-        f"""<div class="stat">
-        <div class="stat-label">TEXT SECTIONS INDEXED</div>
-        <div class="stat-value">{len(st.session_state.chunks)}</div>
-        </div>""",
-        unsafe_allow_html=True
+        '<p class="small">Ask questions about your uploaded notes.</p>',
+        unsafe_allow_html=True,
     )
 
-with c3:
-    status = (
-        "Ready to learn"
-        if st.session_state.chunks
-        else "Waiting for a file"
-    )
-
-    st.markdown(
-        f"""<div class="stat">
-        <div class="stat-label">STUDY MODE</div>
-        <div class="stat-value">{status}</div>
-        </div>""",
-        unsafe_allow_html=True
-    )
-
-
-# -------------------- WELCOME SCREEN --------------------
-
-if not st.session_state.chunks:
-    left, right = st.columns([1.1, 1])
+    left, right = st.columns(2)
 
     with left:
-        st.markdown("### ✨ What you can do")
-
-        st.markdown("""
-        <div class="panel">
-            <p>🧠 <b>Simple explanations</b><br>
-            <span class="small-muted">
-            Turn difficult paragraphs into student-friendly language.
-            </span></p>
-
-            <p>🌐 <b>English + Urdu</b><br>
-            <span class="small-muted">
-            Choose the language that helps you learn best.
-            </span></p>
-
-            <p>💬 <b>Ask your document</b><br>
-            <span class="small-muted">
-            Get answers based on relevant sections of your file.
-            </span></p>
-
-            <p>🎯 <b>Practice quiz</b><br>
-            <span class="small-muted">
-            Generate multiple-choice questions and check your score.
-            </span></p>
-        </div>
-        """, unsafe_allow_html=True)
+        answer_language = st.selectbox(
+            "Answer language",
+            ["English", "Urdu", "Roman Urdu", "English + Urdu"],
+        )
 
     with right:
-        st.markdown("### 🚀 Get started")
+        explanation_style = st.selectbox(
+            "Explanation style",
+            [
+                "Simple Explanation",
+                "Exam Notes",
+                "Detailed Explanation",
+            ],
+        )
 
+    with st.form("study_question_form"):
+        user_question = st.text_area(
+            "Your question",
+            placeholder=(
+                "Example: Explain the main concept in simple words..."
+            ),
+            height=100,
+        )
+
+        ask_button = st.form_submit_button(
+            "✨ Explain This Topic",
+            use_container_width=True,
+        )
+
+    if ask_button:
+        if not st.session_state.groq_api_key.strip():
+            st.warning("Enter your Groq API key in the sidebar.")
+        elif not st.session_state.document_text:
+            st.warning("Upload and load a document first.")
+        elif not user_question.strip():
+            st.warning("Please type a question.")
+        else:
+            with st.spinner("Lumina is preparing your explanation..."):
+                try:
+                    answer = explain_topic(
+                        user_question.strip(),
+                        answer_language,
+                        explanation_style,
+                    )
+
+                    st.session_state.chat_history.append({
+                        "question": user_question.strip(),
+                        "answer": answer,
+                    })
+
+                except Exception as error:
+                    st.error(f"Could not generate answer: {error}")
+
+    if st.session_state.chat_history:
+        st.divider()
+        st.markdown("### Your study conversation")
+
+        for item in reversed(st.session_state.chat_history):
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div class="panel">
+                        <div class="eyebrow">YOUR QUESTION</div>
+                        <strong>{item["question"]}</strong>
+                        <br><br>
+                        <div class="eyebrow">LUMINA EXPLAINS</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                st.markdown(item["answer"])
+
+        if st.button("Clear Conversation"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    elif not st.session_state.document_text:
+        st.info(
+            "👈 Enter your Groq API key and load a document "
+            "using the sidebar to begin."
+        )
+
+# ==================== QUIZ ARENA ====================
+
+with quiz_tab:
+    st.markdown("## 🏆 Quiz Arena")
+    st.markdown(
+        "Turn your study material into a challenge. "
+        "Answer the questions, submit your quiz, and review your mistakes."
+    )
+
+    st.markdown("""
+    <div class="panel">
+        <div class="eyebrow">BUILD YOUR CHALLENGE</div>
+        <h3>Ready to test your knowledge?</h3>
+        Choose a topic, difficulty, and number of questions below.
+    </div>
+    """, unsafe_allow_html=True)
+
+    q1, q2, q3 = st.columns([1.5, 1, 1])
+
+    with q1:
+        quiz_topic = st.text_input(
+            "Topic (optional)",
+            placeholder="e.g. AES encryption",
+        )
+
+    with q2:
+        question_count = st.selectbox(
+            "Number of questions",
+            [5, 10, 15],
+        )
+
+    with q3:
+        difficulty = st.selectbox(
+            "Difficulty",
+            ["Easy", "Medium", "Hard"],
+            index=1,
+        )
+
+    quiz_language = st.selectbox(
+        "Quiz language",
+        ["English", "Urdu", "Roman Urdu"],
+    )
+
+    if st.button("⚡ Generate My Quiz", use_container_width=True):
+        if not st.session_state.groq_api_key.strip():
+            st.warning("Enter your Groq API key in the sidebar.")
+        elif not st.session_state.document_text:
+            st.warning("Load a document before generating a quiz.")
+        else:
+            with st.spinner("Creating your quiz..."):
+                try:
+                    st.session_state.quiz = generate_quiz(
+                        quiz_topic,
+                        question_count,
+                        difficulty,
+                        quiz_language,
+                    )
+
+                    st.session_state.quiz_answers = {}
+                    st.session_state.quiz_submitted = False
+                    st.session_state.quiz_radio_values = {}
+
+                    st.success(
+                        f"{len(st.session_state.quiz)} questions are ready!"
+                    )
+
+                except Exception as error:
+                    st.error(f"Could not generate quiz: {error}")
+
+    if st.session_state.quiz:
+        st.divider()
+        st.markdown(
+            f"### 🎯 {quiz_topic or 'Document Knowledge'}"
+        )
+
+        total_questions = len(st.session_state.quiz)
+        answered_count = len(st.session_state.quiz_answers)
+
+        st.progress(
+            min(answered_count / total_questions, 1.0),
+            text=f"{answered_count} of {total_questions} answered",
+        )
+
+        with st.form("quiz_form"):
+            selected_answers = {}
+
+            for index, item in enumerate(st.session_state.quiz):
+                st.markdown(
+                    f"""
+                    <div class="question-card">
+                        <div class="eyebrow">
+                            QUESTION {index + 1} OF {total_questions}
+                        </div>
+                        <h4>{item["question"]}</h4>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                current_answer = st.session_state.quiz_answers.get(
+                    str(index)
+                )
+
+                selected = st.radio(
+                    f"Answer {index + 1}",
+                    options=[0, 1, 2, 3],
+                    format_func=lambda choice, options=item["options"]: (
+                        options[choice]
+                    ),
+                    index=current_answer,
+                    key=f"quiz_answer_{index}",
+                    disabled=st.session_state.quiz_submitted,
+                    label_visibility="collapsed",
+                )
+
+                selected_answers[str(index)] = selected
+
+            if not st.session_state.quiz_submitted:
+                submit_answers = st.form_submit_button(
+                    "🏁 Submit Answers",
+                    use_container_width=True,
+                )
+            else:
+                submit_answers = False
+
+        if submit_answers:
+            st.session_state.quiz_answers = selected_answers
+            correct_count = sum(
+                selected_answers.get(str(i)) == item["answer"]
+                for i, item in enumerate(st.session_state.quiz)
+            )
+
+            st.session_state.quiz_score = round(
+                100 * correct_count / total_questions
+            )
+            st.session_state.quiz_submitted = True
+            st.rerun()
+
+        if st.session_state.quiz_submitted:
+            correct_count = sum(
+                st.session_state.quiz_answers.get(str(i)) == item["answer"]
+                for i, item in enumerate(st.session_state.quiz)
+            )
+
+            percentage = round(
+                100 * correct_count / total_questions
+            )
+
+            st.divider()
+            st.markdown("## 🎉 Your Results")
+
+            result1, result2, result3 = st.columns(3)
+
+            result1.metric(
+                "Correct Answers",
+                f"{correct_count}/{total_questions}",
+            )
+            result2.metric("Accuracy", f"{percentage}%")
+            result3.metric(
+                "Performance",
+                (
+                    "Excellent!"
+                    if percentage >= 80
+                    else "Good effort"
+                    if percentage >= 50
+                    else "Keep practicing"
+                ),
+            )
+
+            st.progress(percentage / 100)
+
+            st.markdown("### 📖 Review Your Answers")
+
+            for index, item in enumerate(st.session_state.quiz):
+                chosen = st.session_state.quiz_answers.get(str(index))
+                correct = chosen == item["answer"]
+
+                with st.expander(
+                    f'{"✅" if correct else "❌"} Question {index + 1}'
+                ):
+                    st.write(item["question"])
+
+                    if chosen is not None:
+                        st.write(
+                            f"**Your answer:** {item['options'][chosen]}"
+                        )
+                    else:
+                        st.write("**Your answer:** Not answered")
+
+                    st.write(
+                        f"**Correct answer:** "
+                        f"{item['options'][item['answer']]}"
+                    )
+
+                    st.write(
+                        f"**Explanation:** {item['explanation']}"
+                    )
+
+            if st.button(
+                "🔁 Generate Another Quiz",
+                use_container_width=True,
+            ):
+                st.session_state.quiz = []
+                st.session_state.quiz_answers = {}
+                st.session_state.quiz_submitted = False
+                st.session_state.quiz_radio_values = {}
+                st.rerun()
+
+    else:
         st.markdown("""
         <div class="panel">
-            <ol>
-                <li>Enter your Groq API key in the sidebar.</li>
-                <li>Upload a PDF, DOCX, TXT, or Markdown file.</li>
-                <li>Click <b>Analyze document</b>.</li>
-                <li>Choose Explain, Ask, or Quiz.</li>
-            </ol>
-
-            <p class="small-muted">
-            Scanned PDFs may need OCR before uploading.
+            <h3>✨ Your next challenge awaits</h3>
+            <p>
+                1. Load your study material.<br>
+                2. Choose your quiz settings.<br>
+                3. Click Generate My Quiz.<br>
+                4. Submit your answers to see your score.
             </p>
         </div>
         """, unsafe_allow_html=True)
 
+# ==================== QUICK START ====================
 
-# -------------------- STUDY WORKSPACE --------------------
+with guide_tab:
+    st.markdown("## 🧭 Get Started")
 
-if st.session_state.chunks:
+    a, b, c = st.columns(3)
 
-    st.markdown(
-        f"<div class='small-muted'>Active file: "
-        f"<b>{st.session_state.doc_name}</b> · "
-        f"{len(st.session_state.doc_text):,} characters extracted</div>",
-        unsafe_allow_html=True
+    with a:
+        st.markdown("""
+        <div class="panel">
+            <div class="eyebrow">STEP 01</div>
+            <h3>🔐 Connect</h3>
+            Enter your own Groq API key in the sidebar.
+        </div>
+        """, unsafe_allow_html=True)
+
+    with b:
+        st.markdown("""
+        <div class="panel">
+            <div class="eyebrow">STEP 02</div>
+            <h3>📚 Upload</h3>
+            Load a PDF, DOCX, TXT, or Markdown document.
+        </div>
+        """, unsafe_allow_html=True)
+
+    with c:
+        st.markdown("""
+        <div class="panel">
+            <div class="eyebrow">STEP 03</div>
+            <h3>🚀 Practice</h3>
+            Ask questions or test yourself in Quiz Arena.
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("### Active model")
+    st.code(MODEL)
+
+    st.caption(
+        "Note: scanned PDFs may need OCR before their text can be extracted."
     )
-
-    if not api_key:
-        st.warning(
-            "Enter your Groq API key in the sidebar to use AI features."
-        )
-
-    tabs = st.tabs([
-        "✨ Explain",
-        "💬 Ask questions",
-        "🎯 Quiz",
-        "📄 Document preview"
-    ])
-
-    if api_key:
-        try:
-            client = Groq(api_key=api_key)
-        except Exception as e:
-            st.error(f"Could not initialize Groq: {e}")
-            client = None
-
-        # -------------------- EXPLAIN --------------------
-
-        with tabs[0]:
-            st.markdown("### Make this document easy to understand")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                lang = st.selectbox(
-                    "Explanation language",
-                    [
-                        "Simple English",
-                        "Urdu (اردو)",
-                        "Roman Urdu",
-                        "English + Urdu"
-                    ],
-                    key="explain_lang"
-                )
-
-            with col2:
-                depth = st.selectbox(
-                    "Detail level",
-                    [
-                        "Quick summary",
-                        "Topic-by-topic explanation",
-                        "Detailed study notes"
-                    ],
-                    key="depth"
-                )
-
-            if st.button(
-                "✨ Explain my document",
-                use_container_width=True
-            ):
-                context = "\n\n".join(
-                    st.session_state.chunks[
-                        :min(10, len(st.session_state.chunks))
-                    ]
-                )
-
-                requests = {
-                    "Quick summary":
-                        "Summarize the main idea, key points, and conclusion.",
-
-                    "Topic-by-topic explanation":
-                        "Explain the main topics one by one, with simple examples.",
-
-                    "Detailed study notes":
-                        "Create study notes with headings, definitions, key points, and a recap."
-                }
-
-                with st.spinner("Creating your explanation..."):
-                    try:
-                        result = call_groq(
-                            client,
-                            model,
-                            "You are a patient tutor who makes complex documents easy to understand.",
-                            document_prompt(
-                                context,
-                                requests[depth],
-                                lang
-                            ),
-                            0.25
-                        )
-
-                        st.session_state.explanation = result
-
-                    except Exception as e:
-                        st.error(f"Groq request failed: {e}")
-
-            if st.session_state.explanation:
-                st.markdown(
-                    st.session_state.explanation
-                )
-
-                st.download_button(
-                    "⬇️ Download explanation (.txt)",
-                    st.session_state.explanation,
-                    file_name="document_explanation.txt",
-                    mime="text/plain"
-                )
-
-        # -------------------- ASK QUESTIONS --------------------
-
-        with tabs[1]:
-            st.markdown("### Ask anything about your file")
-
-            st.caption(
-                "Answers use relevant sections of your document."
-            )
-
-            q_lang = st.selectbox(
-                "Answer language",
-                [
-                    "Simple English",
-                    "Urdu (اردو)",
-                    "Roman Urdu",
-                    "English + Urdu"
-                ],
-                key="qa_lang"
-            )
-
-            with st.form("ask_form", clear_on_submit=True):
-                question = st.text_input(
-                    "Your question",
-                    placeholder="Explain the main concept with an example..."
-                )
-
-                submitted = st.form_submit_button("Ask Lumina")
-
-            if submitted and question.strip():
-                relevant = retrieve(
-                    question,
-                    st.session_state.chunks,
-                    5
-                )
-
-                if not relevant:
-                    relevant = st.session_state.chunks[:3]
-
-                context = "\n\n---\n\n".join(relevant)
-
-                with st.spinner("Preparing your answer..."):
-                    try:
-                        answer = call_groq(
-                            client,
-                            model,
-                            "You are a helpful study assistant. Use the supplied document context and do not invent facts.",
-                            document_prompt(
-                                context,
-                                question,
-                                q_lang
-                            ),
-                            0.2
-                        )
-
-                        st.session_state.chat_history.append({
-                            "q": question,
-                            "a": answer
-                        })
-
-                    except Exception as e:
-                        st.error(f"Groq request failed: {e}")
-
-            for item in reversed(st.session_state.chat_history):
-                with st.chat_message("user"):
-                    st.write(item["q"])
-
-                with st.chat_message("assistant", avatar="✦"):
-                    st.markdown(item["a"])
-
-            if st.session_state.chat_history:
-                if st.button("Clear conversation"):
-                    st.session_state.chat_history = []
-                    st.rerun()
-
-        # -------------------- QUIZ --------------------
-
-        with tabs[2]:
-            st.markdown("### Check what you have learned")
-
-            quiz_col1, quiz_col2, quiz_col3 = st.columns(3)
-
-            with quiz_col1:
-                quiz_count = st.select_slider(
-                    "Number of questions",
-                    options=[5, 8, 10, 15],
-                    value=5
-                )
-
-            with quiz_col2:
-                quiz_lang = st.selectbox(
-                    "Quiz language",
-                    [
-                        "Simple English",
-                        "Urdu (اردو)",
-                        "Roman Urdu"
-                    ],
-                    key="quiz_lang"
-                )
-
-            with quiz_col3:
-                quiz_level = st.selectbox(
-                    "Difficulty",
-                    ["Easy", "Mixed", "Challenging"],
-                    index=1
-                )
-
-            if st.button(
-                "🎯 Generate quiz",
-                use_container_width=True
-            ):
-                context = "\n\n".join(
-                    st.session_state.chunks[
-                        :min(12, len(st.session_state.chunks))
-                    ]
-                )
-
-                # FIXED: JSON braces are escaped for the f-string.
-                prompt = f"""Create exactly {quiz_count} multiple-choice
-questions using only the document context.
-
-Language: {quiz_lang}.
-Difficulty: {quiz_level}.
-
-Return valid JSON only in this schema:
-{{"questions":[{{"question":"...","options":["A...","B...","C...","D..."],"answer":0,"explanation":"..."}}]}}
-
-The answer must be the zero-based index of the correct option (0-3).
-Every question must have exactly four options.
-Do not include Markdown code fences.
-
-DOCUMENT CONTEXT:
-{context}
-"""
-
-                with st.spinner("Building your quiz..."):
-                    try:
-                        raw = call_groq(
-                            client,
-                            model,
-                            "You create accurate educational multiple-choice quizzes. Output valid JSON only.",
-                            prompt,
-                            0.35
-                        )
-
-                        parsed = parse_json_response(raw)
-
-                        questions = (
-                            parsed
-                            if isinstance(parsed, list)
-                            else parsed.get("questions", [])
-                        )
-
-                        if not questions:
-                            raise ValueError(
-                                "No questions were returned."
-                            )
-
-                        st.session_state.quiz = questions
-                        st.session_state.quiz_answers = {}
-
-                    except Exception as e:
-                        st.error(
-                            f"Could not generate the quiz. Please try again. Details: {e}"
-                        )
-
-            if st.session_state.quiz:
-
-                with st.form("quiz_form"):
-                    for i, item in enumerate(st.session_state.quiz):
-                        st.markdown(
-                            f"**Q{i+1}. {item.get('question', 'Question')}**"
-                        )
-
-                        options = item.get("options", [])
-
-                        selected = st.radio(
-                            "Choose one:",
-                            options,
-                            key=f"quiz_{i}",
-                            index=None,
-                            label_visibility="collapsed"
-                        )
-
-                        st.session_state.quiz_answers[i] = selected
-                        st.divider()
-
-                    submitted_quiz = st.form_submit_button(
-                        "Submit answers & see score"
-                    )
-
-                if submitted_quiz:
-                    score = 0
-
-                    for i, item in enumerate(st.session_state.quiz):
-                        options = item.get("options", [])
-                        correct_index = item.get("answer", 0)
-                        chosen = st.session_state.quiz_answers.get(i)
-
-                        correct = (
-                            options[correct_index]
-                            if isinstance(correct_index, int)
-                            and 0 <= correct_index < len(options)
-                            else ""
-                        )
-
-                        if chosen == correct:
-                            score += 1
-
-                    total = len(st.session_state.quiz)
-
-                    st.markdown(
-                        f"## Your score: {score} / {total}"
-                    )
-
-                    st.progress(score / total if total else 0)
-
-                    for i, item in enumerate(st.session_state.quiz):
-                        options = item.get("options", [])
-                        answer_index = item.get("answer", 0)
-
-                        correct = (
-                            options[answer_index]
-                            if isinstance(answer_index, int)
-                            and 0 <= answer_index < len(options)
-                            else "Not available"
-                        )
-
-                        chosen = st.session_state.quiz_answers.get(
-                            i, "No answer"
-                        )
-
-                        st.markdown(
-                            f"**Q{i+1}:** "
-                            f"{'✅ Correct' if chosen == correct else '❌ Incorrect'}"
-                        )
-
-                        st.markdown(
-                            f"Correct answer: **{correct}**"
-                        )
-
-                        if item.get("explanation"):
-                            st.caption(item["explanation"])
-
-                st.download_button(
-                    "⬇️ Download quiz as JSON",
-                    json.dumps(
-                        st.session_state.quiz,
-                        ensure_ascii=False,
-                        indent=2
-                    ),
-                    file_name="study_quiz.json",
-                    mime="application/json"
-                )
-
-    # -------------------- DOCUMENT PREVIEW --------------------
-
-    with tabs[3]:
-        st.markdown("### Extracted text preview")
-
-        st.caption(
-            "Preview is limited to the first 12,000 characters."
-        )
-
-        st.text_area(
-            "Document text",
-            st.session_state.doc_text[:12000],
-            height=360,
-            disabled=True
-        )
-
-        st.download_button(
-            "⬇️ Download extracted text (.txt)",
-            st.session_state.doc_text,
-            file_name="extracted_document.txt",
-            mime="text/plain"
-        )
-
 
 # -------------------- FOOTER --------------------
 
-st.markdown("---")
-
-st.markdown("""
-<div style="text-align:center;color:#8492ad;font-size:12px">
-    ✦ LUMINA DOCUMENT AI · Built with Streamlit + Groq
-</div>
-""", unsafe_allow_html=True)
+st.divider()
+st.markdown(
+    """
+    <div style="text-align:center;color:#8490ae;padding:12px;">
+        ✨ Lumina AI Study Assistant · Learn with clarity.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
