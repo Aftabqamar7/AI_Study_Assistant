@@ -491,8 +491,7 @@ uploaded_file = st.file_uploader(
          "text files, or individual images.",
 )
 
-
-    if st.button("📥 Load Document", use_container_width=True):
+if st.button("📥 Load Document", use_container_width=True):
         if uploaded_file is None:
             st.warning("Please choose a document first.")
         else:
