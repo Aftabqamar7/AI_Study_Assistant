@@ -1,3 +1,6 @@
+from pptx import Presentation
+from PIL import Image
+import pytesseract
 
 import io
 import re
@@ -155,26 +158,79 @@ for key, value in defaults.items():
 
 # -------------------- DOCUMENT PROCESSING --------------------
 
+
 def extract_document(uploaded_file):
     name = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
 
+    # PDF files
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(content))
         return "\n\n".join(
-            page.extract_text() or "" for page in reader.pages
+            f"Page {i + 1}\n{page.extract_text() or ''}"
+            for i, page in enumerate(reader.pages)
         ).strip()
 
+    # Word documents
     if name.endswith(".docx"):
         doc = Document(io.BytesIO(content))
-        return "\n".join(
-            paragraph.text for paragraph in doc.paragraphs
+        parts = [
+            paragraph.text
+            for paragraph in doc.paragraphs
+            if paragraph.text.strip()
+        ]
+
+        # Also extract text from Word tables
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append(" | ".join(
+                    cell.text for cell in row.cells
+                ))
+
+        return "\n".join(parts).strip()
+
+    # PowerPoint presentations
+    if name.endswith(".pptx"):
+        presentation = Presentation(io.BytesIO(content))
+        slides_text = []
+
+        for slide_number, slide in enumerate(
+            presentation.slides, start=1
+        ):
+            slide_parts = []
+
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    if shape.text.strip():
+                        slide_parts.append(shape.text.strip())
+
+                # Extract text from PowerPoint tables
+                if shape.has_table:
+                    for row in shape.table.rows:
+                        slide_parts.append(" | ".join(
+                            cell.text for cell in row.cells
+                        ))
+
+            slides_text.append(
+                f"Slide {slide_number}\n"
+                + "\n".join(slide_parts)
+            )
+
+        return "\n\n".join(slides_text).strip()
+
+    # Individual images and slide screenshots (OCR)
+    if name.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff")):
+        image = Image.open(io.BytesIO(content)).convert("RGB")
+        return pytesseract.image_to_string(image).strip()
+
+    # Plain text and Markdown
+    if name.endswith((".txt", ".md")):
+        return content.decode(
+            "utf-8", errors="replace"
         ).strip()
 
-    if name.endswith((".txt", ".md")):
-        return content.decode("utf-8", errors="replace").strip()
-
     raise ValueError("Unsupported file type.")
+
 
 # Simple keyword-based document retrieval.
 def retrieve_context(question, max_chars=12000):
@@ -416,10 +472,25 @@ with st.sidebar:
     st.divider()
     st.markdown("### 📚 Upload study material")
 
-    uploaded_file = st.file_uploader(
-        "Choose a document",
-        type=["pdf", "docx", "txt", "md"],
-    )
+    
+uploaded_file = st.file_uploader(
+    "Upload your study material",
+    type=[
+        "pdf",
+        "docx",
+        "pptx",
+        "txt",
+        "md",
+        "png",
+        "jpg",
+        "jpeg",
+        "tif",
+        "tiff",
+    ],
+    help="Upload PDFs, PowerPoint slides, Word documents, "
+         "text files, or individual images.",
+)
+
 
     if st.button("📥 Load Document", use_container_width=True):
         if uploaded_file is None:
