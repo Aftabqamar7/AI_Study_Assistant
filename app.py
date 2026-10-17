@@ -1,17 +1,18 @@
-from pptx import Presentation
-from PIL import Image
-import pytesseract
 
 import io
 import re
 import json
+import html
 
 import streamlit as st
 from groq import Groq
 from pypdf import PdfReader
 from docx import Document
+from pptx import Presentation
+from PIL import Image
+import pytesseract
 
-# -------------------- CONFIGURATION --------------------
+# ==================== CONFIGURATION ====================
 
 MODEL = "openai/gpt-oss-120b"
 
@@ -21,16 +22,17 @@ st.set_page_config(
     layout="wide",
 )
 
-# -------------------- CUSTOM DESIGN --------------------
+# ==================== DESIGN ====================
 
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 .stApp {
-    background: radial-gradient(circle at top left, #252052, transparent 35%),
-                radial-gradient(circle at top right, #123344, transparent 30%),
-                #0a0d18;
+    background:
+        radial-gradient(circle at top left, #252052, transparent 35%),
+        radial-gradient(circle at top right, #123344, transparent 30%),
+        #0a0d18;
     color: #f5f7ff;
     font-family: Inter, sans-serif;
 }
@@ -38,7 +40,7 @@ st.markdown("""
     background: #101529;
     border-right: 1px solid #29334d;
 }
-h1, h2, h3 { color: #ffffff !important; }
+h1, h2, h3, h4 { color: #ffffff !important; }
 p, label { color: #d7def3; }
 
 .hero {
@@ -73,6 +75,7 @@ p, label { color: #d7def3; }
     font-size: 1.5rem;
     font-weight: 800;
     margin-top: 8px;
+    overflow-wrap: anywhere;
 }
 .panel {
     background: #141b2e;
@@ -139,7 +142,7 @@ hr { border-color: #29344e; }
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- SESSION STATE --------------------
+# ==================== SESSION STATE ====================
 
 defaults = {
     "document_text": "",
@@ -149,47 +152,51 @@ defaults = {
     "quiz_submitted": False,
     "quiz_answers": {},
     "quiz_score": None,
-    "quiz_radio_values": {},
+    "groq_api_key": "",
+    "quiz_topic": "",
 }
 
 for key, value in defaults.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-# -------------------- DOCUMENT PROCESSING --------------------
-
+# ==================== DOCUMENT EXTRACTION ====================
 
 def extract_document(uploaded_file):
+    """Extract text from supported study materials."""
     name = uploaded_file.name.lower()
     content = uploaded_file.getvalue()
 
-    # PDF files
+    # PDF
     if name.endswith(".pdf"):
         reader = PdfReader(io.BytesIO(content))
-        return "\n\n".join(
-            f"Page {i + 1}\n{page.extract_text() or ''}"
-            for i, page in enumerate(reader.pages)
-        ).strip()
+        parts = []
 
-    # Word documents
+        for page_number, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if text.strip():
+                parts.append(f"Page {page_number}\n{text}")
+
+        return "\n\n".join(parts).strip()
+
+    # Word document
     if name.endswith(".docx"):
         doc = Document(io.BytesIO(content))
-        parts = [
-            paragraph.text
-            for paragraph in doc.paragraphs
-            if paragraph.text.strip()
-        ]
+        parts = []
 
-        # Also extract text from Word tables
+        for paragraph in doc.paragraphs:
+            if paragraph.text.strip():
+                parts.append(paragraph.text.strip())
+
         for table in doc.tables:
             for row in table.rows:
-                parts.append(" | ".join(
-                    cell.text for cell in row.cells
-                ))
+                parts.append(
+                    " | ".join(cell.text for cell in row.cells)
+                )
 
         return "\n".join(parts).strip()
 
-    # PowerPoint presentations
+    # PowerPoint
     if name.endswith(".pptx"):
         presentation = Presentation(io.BytesIO(content))
         slides_text = []
@@ -200,16 +207,14 @@ def extract_document(uploaded_file):
             slide_parts = []
 
             for shape in slide.shapes:
-                if shape.has_text_frame:
-                    if shape.text.strip():
-                        slide_parts.append(shape.text.strip())
+                if shape.has_text_frame and shape.text.strip():
+                    slide_parts.append(shape.text.strip())
 
-                # Extract text from PowerPoint tables
                 if shape.has_table:
                     for row in shape.table.rows:
-                        slide_parts.append(" | ".join(
-                            cell.text for cell in row.cells
-                        ))
+                        slide_parts.append(
+                            " | ".join(cell.text for cell in row.cells)
+                        )
 
             slides_text.append(
                 f"Slide {slide_number}\n"
@@ -218,21 +223,23 @@ def extract_document(uploaded_file):
 
         return "\n\n".join(slides_text).strip()
 
-    # Individual images and slide screenshots (OCR)
+    # Individual image / slide screenshot (OCR)
     if name.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff")):
         image = Image.open(io.BytesIO(content)).convert("RGB")
         return pytesseract.image_to_string(image).strip()
 
-    # Plain text and Markdown
+    # Text and Markdown
     if name.endswith((".txt", ".md")):
-        return content.decode(
-            "utf-8", errors="replace"
-        ).strip()
+        return content.decode("utf-8", errors="replace").strip()
 
-    raise ValueError("Unsupported file type.")
+    raise ValueError(
+        "Unsupported file. Upload PDF, DOCX, PPTX, TXT, MD, "
+        "PNG, JPG, JPEG, TIF, or TIFF."
+    )
 
 
-# Simple keyword-based document retrieval.
+# ==================== DOCUMENT RETRIEVAL ====================
+
 def retrieve_context(question, max_chars=12000):
     text = st.session_state.document_text
 
@@ -240,9 +247,9 @@ def retrieve_context(question, max_chars=12000):
         return ""
 
     paragraphs = [
-        p.strip()
-        for p in re.split(r"\n+", text)
-        if p.strip()
+        part.strip()
+        for part in re.split(r"\n+", text)
+        if part.strip()
     ]
 
     keywords = {
@@ -251,43 +258,38 @@ def retrieve_context(question, max_chars=12000):
         if len(word) > 2
     }
 
-    scored_paragraphs = []
+    scored = []
 
     for index, paragraph in enumerate(paragraphs):
-        paragraph_words = {
+        words = {
             word.lower()
             for word in re.findall(r"\w+", paragraph)
             if len(word) > 2
         }
 
-        score = len(keywords.intersection(paragraph_words))
+        score = len(keywords.intersection(words))
 
-        if score > 0:
-            scored_paragraphs.append(
-                (score, index, paragraph)
-            )
+        if score:
+            scored.append((score, index, paragraph))
 
-    scored_paragraphs.sort(
-        key=lambda item: (-item[0], item[1])
-    )
+    scored.sort(key=lambda item: (-item[0], item[1]))
 
-    if scored_paragraphs:
-        selected = [
-            item[2] for item in scored_paragraphs[:20]
-        ]
+    if scored:
+        selected = [item[2] for item in scored[:20]]
     else:
         selected = paragraphs[:10]
 
     return "\n\n".join(selected)[:max_chars]
 
-# -------------------- GROQ AI --------------------
+
+# ==================== GROQ AI ====================
 
 def get_ai_response(messages, temperature=0.3):
     api_key = st.session_state.get("groq_api_key", "").strip()
 
     if not api_key:
         raise ValueError(
-            "Please enter your Groq API key in the sidebar."
+            "Enter your Groq API key in the sidebar."
         )
 
     client = Groq(api_key=api_key)
@@ -300,30 +302,30 @@ def get_ai_response(messages, temperature=0.3):
 
     return response.choices[0].message.content or ""
 
-# -------------------- STUDY CHAT --------------------
+
+# ==================== STUDY CHAT ====================
 
 def explain_topic(question, language, style):
     context = retrieve_context(question)
 
     languages = {
         "English": "Answer in simple, clear English.",
-        "Urdu": "جواب آسان اور واضح اردو میں دیں۔",
+        "Urdu": "جواب آسان اور واضح اردو میں دیں۔ اردو رسم الخط استعمال کریں۔",
         "Roman Urdu": "Answer in easy Roman Urdu.",
         "English + Urdu": (
-            "First answer in simple English, then explain in Urdu."
+            "First answer in simple English, then explain in Urdu script."
         ),
     }
 
     styles = {
         "Simple Explanation": (
-            "Explain for a beginner. Include a simple example."
+            "Explain for a beginner and include a simple example."
         ),
         "Exam Notes": (
-            "Use headings, short bullet points, and key points "
-            "for exam preparation."
+            "Use headings, short bullet points, and key exam points."
         ),
         "Detailed Explanation": (
-            "Explain the topic clearly with useful details and examples."
+            "Explain clearly with useful details and examples."
         ),
     }
 
@@ -332,10 +334,10 @@ def explain_topic(question, language, style):
             "role": "system",
             "content": (
                 "You are Lumina, a helpful study tutor. "
-                "Use the document context as your main source. "
-                "Never pretend the document contains information "
-                "that is not present. If the answer is missing, "
-                "say so clearly. "
+                "Use the uploaded document as your main source. "
+                "Do not invent facts or claim unsupported information "
+                "comes from the document. If the document lacks the "
+                "answer, say so clearly. "
                 + languages[language]
                 + " "
                 + styles[style]
@@ -352,7 +354,8 @@ def explain_topic(question, language, style):
 
     return get_ai_response(messages)
 
-# -------------------- QUIZ GENERATION --------------------
+
+# ==================== QUIZ GENERATION ====================
 
 def generate_quiz(topic, count, difficulty, language):
     context = retrieve_context(
@@ -367,25 +370,21 @@ document context below.
 Difficulty: {difficulty}
 Language: {language}
 
-Return ONLY valid JSON using this structure:
+Return ONLY a valid JSON array with this structure:
 
 [
   {{
     "question": "Question text",
-    "options": [
-      "Option A",
-      "Option B",
-      "Option C",
-      "Option D"
-    ],
+    "options": ["Option A", "Option B", "Option C", "Option D"],
     "answer": 0,
-    "explanation": "Explain why this answer is correct."
+    "explanation": "Explain why the answer is correct."
   }}
 ]
 
 The answer must be an integer from 0 to 3.
-Questions must be clear and based on the supplied material.
+Use clear questions based on the supplied material.
 Do not use Markdown code fences.
+For Urdu, use Urdu script. For Roman Urdu, use Roman Urdu.
 
 DOCUMENT CONTEXT:
 {context}
@@ -399,7 +398,7 @@ TOPIC:
             {
                 "role": "system",
                 "content": (
-                    "You create educational MCQ quizzes. "
+                    "You create educational multiple-choice quizzes. "
                     "Return only valid JSON."
                 ),
             },
@@ -419,37 +418,38 @@ TOPIC:
 
     if not match:
         raise ValueError(
-            "The AI did not return valid quiz data. Try again."
+            "The AI did not return valid quiz data. Please try again."
         )
 
     questions = json.loads(match.group(0))
     valid_questions = []
 
-    for question in questions:
-        options = question.get("options", [])
-        answer = question.get("answer")
+    for item in questions:
+        options = item.get("options", [])
+        answer = item.get("answer")
 
         if (
-            isinstance(question.get("question"), str)
+            isinstance(item.get("question"), str)
+            and isinstance(options, list)
             and len(options) == 4
             and isinstance(answer, int)
+            and not isinstance(answer, bool)
             and 0 <= answer <= 3
         ):
             valid_questions.append({
-                "question": question["question"],
+                "question": item["question"],
                 "options": [str(option) for option in options],
                 "answer": answer,
-                "explanation": str(
-                    question.get("explanation", "")
-                ),
+                "explanation": str(item.get("explanation", "")),
             })
 
     if not valid_questions:
-        raise ValueError("No valid questions were generated.")
+        raise ValueError("No valid quiz questions were generated.")
 
     return valid_questions[:count]
 
-# -------------------- SIDEBAR --------------------
+
+# ==================== SIDEBAR ====================
 
 with st.sidebar:
     st.markdown("## ✨ Lumina")
@@ -463,45 +463,41 @@ with st.sidebar:
         type="password",
         key="groq_api_key",
         placeholder="Enter your Groq API key",
+        help="Get your key from console.groq.com.",
     )
 
-    st.caption(
-        "Keep your API key private. Never commit it to GitHub."
-    )
+    st.caption("Keep your API key private. Never commit it to GitHub.")
 
     st.divider()
     st.markdown("### 📚 Upload study material")
 
-    
-uploaded_file = st.file_uploader(
-    "Upload your study material",
-    type=[
-        "pdf",
-        "docx",
-        "pptx",
-        "txt",
-        "md",
-        "png",
-        "jpg",
-        "jpeg",
-        "tif",
-        "tiff",
-    ],
-    help="Upload PDFs, PowerPoint slides, Word documents, "
-         "text files, or individual images.",
-)
+    uploaded_file = st.file_uploader(
+        "Choose your study material",
+        type=[
+            "pdf", "docx", "pptx", "txt", "md",
+            "png", "jpg", "jpeg", "tif", "tiff"
+        ],
+        help=(
+            "Upload a PDF, PowerPoint, Word document, text file, "
+            "Markdown file, or a single image."
+        ),
+    )
 
-if st.button("📥 Load Document", use_container_width=True):
+    if st.button(
+        "📥 Load Document",
+        use_container_width=True,
+    ):
         if uploaded_file is None:
-            st.warning("Please choose a document first.")
+            st.warning("Please choose a file first.")
         else:
             try:
-                extracted = extract_document(uploaded_file)
+                with st.spinner("Reading your study material..."):
+                    extracted = extract_document(uploaded_file)
 
-                if not extracted:
+                if not extracted.strip():
                     st.error(
-                        "No readable text found. "
-                        "Scanned PDFs may need OCR."
+                        "No readable text was found. "
+                        "Scanned PDFs or images may require OCR."
                     )
                 else:
                     st.session_state.document_text = extracted
@@ -510,10 +506,12 @@ if st.button("📥 Load Document", use_container_width=True):
                     st.session_state.quiz = []
                     st.session_state.quiz_answers = {}
                     st.session_state.quiz_submitted = False
-                    st.success("Document loaded successfully!")
+                    st.session_state.quiz_score = None
+
+                    st.success("Study material loaded successfully!")
 
             except Exception as error:
-                st.error(f"Could not read document: {error}")
+                st.error(f"Could not read this file: {error}")
 
     if st.session_state.document_text:
         st.markdown("**Current document**")
@@ -522,13 +520,22 @@ if st.button("📥 Load Document", use_container_width=True):
             f"{len(st.session_state.document_text):,} characters extracted"
         )
 
-        if st.button("Remove Document", use_container_width=True):
+        with st.expander("Preview extracted text"):
+            st.text(
+                st.session_state.document_text[:2500]
+            )
+
+        if st.button(
+            "🗑️ Remove Document",
+            use_container_width=True,
+        ):
             st.session_state.document_text = ""
             st.session_state.document_name = ""
             st.session_state.chat_history = []
             st.session_state.quiz = []
             st.session_state.quiz_answers = {}
             st.session_state.quiz_submitted = False
+            st.session_state.quiz_score = None
             st.rerun()
 
     st.divider()
@@ -536,7 +543,8 @@ if st.button("📥 Load Document", use_container_width=True):
     st.code(MODEL)
     st.caption("Fixed model. No Llama model options.")
 
-# -------------------- MAIN HEADER --------------------
+
+# ==================== MAIN HEADER ====================
 
 st.markdown("""
 <div class="hero">
@@ -546,11 +554,14 @@ st.markdown("""
         Understand your notes, ask questions, prepare for exams,
         and challenge yourself with interactive quizzes.
     </p>
-    <span>📚 Document AI　·　🧠 Quiz Arena　·　🌐 Multilingual Learning</span>
+    <span>
+        📚 Document AI　·　🧠 Quiz Arena　·　🌐 Multilingual Learning
+    </span>
 </div>
 """, unsafe_allow_html=True)
 
-# Dashboard metrics
+# ==================== DASHBOARD ====================
+
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -562,7 +573,7 @@ with col1:
                 {"Ready" if st.session_state.document_text else "Not Added"}
             </div>
             <div class="small">
-                {st.session_state.document_name or "Upload from the sidebar"}
+                {html.escape(st.session_state.document_name or "Upload from sidebar")}
             </div>
         </div>
         """,
@@ -584,12 +595,8 @@ with col2:
     )
 
 with col3:
-    latest_score = st.session_state.quiz_score
-    score_text = (
-        f"{latest_score}%"
-        if latest_score is not None
-        else "—"
-    )
+    score = st.session_state.quiz_score
+    score_text = f"{score}%" if score is not None else "—"
 
     st.markdown(
         f"""
@@ -602,20 +609,23 @@ with col3:
         unsafe_allow_html=True,
     )
 
-# Main application tabs
+
+# ==================== APPLICATION TABS ====================
+
 study_tab, quiz_tab, guide_tab = st.tabs([
     "💬 Study Chat",
     "🏆 Quiz Arena",
     "🧭 Quick Start",
 ])
 
+
 # ==================== STUDY CHAT ====================
 
 with study_tab:
     st.markdown("## 💬 Ask your study material")
-    st.markdown(
-        '<p class="small">Ask questions about your uploaded notes.</p>',
-        unsafe_allow_html=True,
+    st.caption(
+        "Ask questions about your uploaded notes and receive "
+        "student-friendly explanations."
     )
 
     left, right = st.columns(2)
@@ -676,47 +686,41 @@ with study_tab:
 
     if st.session_state.chat_history:
         st.divider()
-        st.markdown("### Your study conversation")
+        st.markdown("### 📖 Your study conversation")
 
         for item in reversed(st.session_state.chat_history):
             with st.container():
-                st.markdown(
-                    f"""
-                    <div class="panel">
-                        <div class="eyebrow">YOUR QUESTION</div>
-                        <strong>{item["question"]}</strong>
-                        <br><br>
-                        <div class="eyebrow">LUMINA EXPLAINS</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+                st.markdown("**🙋 Your question**")
+                st.write(item["question"])
+                st.markdown("**✨ Lumina explains**")
                 st.markdown(item["answer"])
+                st.divider()
 
-        if st.button("Clear Conversation"):
+        if st.button("🧹 Clear Conversation"):
             st.session_state.chat_history = []
             st.rerun()
 
     elif not st.session_state.document_text:
         st.info(
-            "👈 Enter your Groq API key and load a document "
+            "👈 Enter your Groq API key and load study material "
             "using the sidebar to begin."
         )
+
 
 # ==================== QUIZ ARENA ====================
 
 with quiz_tab:
     st.markdown("## 🏆 Quiz Arena")
-    st.markdown(
-        "Turn your study material into a challenge. "
-        "Answer the questions, submit your quiz, and review your mistakes."
+    st.write(
+        "Turn your study material into a challenge. Answer the questions, "
+        "submit your quiz, and review your mistakes."
     )
 
     st.markdown("""
     <div class="panel">
         <div class="eyebrow">BUILD YOUR CHALLENGE</div>
-        <h3>Ready to test your knowledge?</h3>
-        Choose a topic, difficulty, and number of questions below.
+        <h3>🎯 Ready to test your knowledge?</h3>
+        Choose your topic, difficulty, language, and number of questions.
     </div>
     """, unsafe_allow_html=True)
 
@@ -726,6 +730,7 @@ with quiz_tab:
         quiz_topic = st.text_input(
             "Topic (optional)",
             placeholder="e.g. AES encryption",
+            key="quiz_topic",
         )
 
     with q2:
@@ -746,7 +751,10 @@ with quiz_tab:
         ["English", "Urdu", "Roman Urdu"],
     )
 
-    if st.button("⚡ Generate My Quiz", use_container_width=True):
+    if st.button(
+        "⚡ Generate My Quiz",
+        use_container_width=True,
+    ):
         if not st.session_state.groq_api_key.strip():
             st.warning("Enter your Groq API key in the sidebar.")
         elif not st.session_state.document_text:
@@ -754,19 +762,20 @@ with quiz_tab:
         else:
             with st.spinner("Creating your quiz..."):
                 try:
-                    st.session_state.quiz = generate_quiz(
+                    questions = generate_quiz(
                         quiz_topic,
                         question_count,
                         difficulty,
                         quiz_language,
                     )
 
+                    st.session_state.quiz = questions
                     st.session_state.quiz_answers = {}
                     st.session_state.quiz_submitted = False
-                    st.session_state.quiz_radio_values = {}
+                    st.session_state.quiz_score = None
 
                     st.success(
-                        f"{len(st.session_state.quiz)} questions are ready!"
+                        f"{len(questions)} questions are ready!"
                     )
 
                 except Exception as error:
@@ -781,10 +790,11 @@ with quiz_tab:
         total_questions = len(st.session_state.quiz)
         answered_count = len(st.session_state.quiz_answers)
 
-        st.progress(
-            min(answered_count / total_questions, 1.0),
-            text=f"{answered_count} of {total_questions} answered",
-        )
+        if not st.session_state.quiz_submitted:
+            st.progress(
+                min(answered_count / total_questions, 1.0),
+                text=f"{answered_count} of {total_questions} answered",
+            )
 
         with st.form("quiz_form"):
             selected_answers = {}
@@ -796,13 +806,13 @@ with quiz_tab:
                         <div class="eyebrow">
                             QUESTION {index + 1} OF {total_questions}
                         </div>
-                        <h4>{item["question"]}</h4>
+                        <h4>{html.escape(item["question"])}</h4>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
 
-                current_answer = st.session_state.quiz_answers.get(
+                previous_answer = st.session_state.quiz_answers.get(
                     str(index)
                 )
 
@@ -812,7 +822,7 @@ with quiz_tab:
                     format_func=lambda choice, options=item["options"]: (
                         options[choice]
                     ),
-                    index=current_answer,
+                    index=previous_answer,
                     key=f"quiz_answer_{index}",
                     disabled=st.session_state.quiz_submitted,
                     label_visibility="collapsed",
@@ -820,16 +830,17 @@ with quiz_tab:
 
                 selected_answers[str(index)] = selected
 
+            submit_answers = False
+
             if not st.session_state.quiz_submitted:
                 submit_answers = st.form_submit_button(
                     "🏁 Submit Answers",
                     use_container_width=True,
                 )
-            else:
-                submit_answers = False
 
         if submit_answers:
             st.session_state.quiz_answers = selected_answers
+
             correct_count = sum(
                 selected_answers.get(str(i)) == item["answer"]
                 for i, item in enumerate(st.session_state.quiz)
@@ -896,7 +907,6 @@ with quiz_tab:
                         f"**Correct answer:** "
                         f"{item['options'][item['answer']]}"
                     )
-
                     st.write(
                         f"**Explanation:** {item['explanation']}"
                     )
@@ -908,7 +918,7 @@ with quiz_tab:
                 st.session_state.quiz = []
                 st.session_state.quiz_answers = {}
                 st.session_state.quiz_submitted = False
-                st.session_state.quiz_radio_values = {}
+                st.session_state.quiz_score = None
                 st.rerun()
 
     else:
@@ -924,6 +934,7 @@ with quiz_tab:
         </div>
         """, unsafe_allow_html=True)
 
+
 # ==================== QUICK START ====================
 
 with guide_tab:
@@ -936,7 +947,7 @@ with guide_tab:
         <div class="panel">
             <div class="eyebrow">STEP 01</div>
             <h3>🔐 Connect</h3>
-            Enter your own Groq API key in the sidebar.
+            Enter your Groq API key in the sidebar.
         </div>
         """, unsafe_allow_html=True)
 
@@ -945,7 +956,7 @@ with guide_tab:
         <div class="panel">
             <div class="eyebrow">STEP 02</div>
             <h3>📚 Upload</h3>
-            Load a PDF, DOCX, TXT, or Markdown document.
+            Upload PDF, PowerPoint, Word, TXT, Markdown, or images.
         </div>
         """, unsafe_allow_html=True)
 
@@ -958,16 +969,25 @@ with guide_tab:
         </div>
         """, unsafe_allow_html=True)
 
+    st.markdown("### Supported file types")
+
+    st.write(
+        "PDF · PPTX · DOCX · TXT · MD · PNG · JPG · JPEG · TIF · TIFF"
+    )
+
     st.markdown("### Active model")
     st.code(MODEL)
 
     st.caption(
-        "Note: scanned PDFs may need OCR before their text can be extracted."
+        "Text is extracted from uploaded materials. OCR works on images, "
+        "but accuracy depends on image quality. Scanned PDFs may need OCR."
     )
 
-# -------------------- FOOTER --------------------
+
+# ==================== FOOTER ====================
 
 st.divider()
+
 st.markdown(
     """
     <div style="text-align:center;color:#8490ae;padding:12px;">
@@ -976,3 +996,4 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
